@@ -1,0 +1,6 @@
+ALPHA
+beta
+gamma
+delta from left
+epsilon
+zeta

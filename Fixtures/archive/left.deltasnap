@@ -1,0 +1,36 @@
+{
+ "root": "Fixtures/folders/left",
+ "created": "2026-10-24T00:00:00Z",
+ "items": [
+  {
+   "path": "sub",
+   "size": 0,
+   "isDirectory": true,
+   "modified": "2026-10-24T03:33:59Z"
+  },
+  {
+   "path": "same.txt",
+   "size": 5,
+   "isDirectory": false,
+   "modified": "2025-12-31T16:00:00Z"
+  },
+  {
+   "path": "changed.txt",
+   "size": 10,
+   "isDirectory": false,
+   "modified": "2025-12-31T16:00:00Z"
+  },
+  {
+   "path": "left-only.txt",
+   "size": 17,
+   "isDirectory": false,
+   "modified": "2026-10-24T03:33:53Z"
+  },
+  {
+   "path": "sub/nested.txt",
+   "size": 7,
+   "isDirectory": false,
+   "modified": "2025-12-31T16:00:00Z"
+  }
+ ]
+}
