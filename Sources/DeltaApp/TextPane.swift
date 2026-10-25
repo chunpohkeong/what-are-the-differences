@@ -25,6 +25,27 @@ final class DiffTextView: NSTextView {
     var onCopyMarker: ((Int) -> Void)?
     /// Original line number (0-based) for each shown line when the pane shows a filtered view; nil entries are gaps.
     var lineNumbers: [Int?]? { didSet { enclosingScrollView?.verticalRulerView?.needsDisplay = true } }
+    /// Files or folders dropped on the pane; without it a dropped file inserts its path as text.
+    var onDropFiles: (([URL]) -> Void)?
+
+    func fileDragOperation(_ info: NSDraggingInfo) -> NSDragOperation? {
+        onDropFiles != nil && droppedURLs(info) != nil ? .copy : nil
+    }
+
+    func acceptFiles(_ info: NSDraggingInfo) -> Bool {
+        guard let onDropFiles, let urls = droppedURLs(info) else { return false }
+        onDropFiles(urls)
+        return true
+    }
+
+    private func droppedURLs(_ info: NSDraggingInfo) -> [URL]? {
+        let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]
+        return urls?.isEmpty == false ? urls : nil
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { fileDragOperation(sender) ?? super.draggingEntered(sender) }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { fileDragOperation(sender) ?? super.draggingUpdated(sender) }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool { acceptFiles(sender) || super.performDragOperation(sender) }
 
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
@@ -194,7 +215,9 @@ final class LineNumberRuler: NSRulerView {
     tv.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
     tv.setAccessibilityLabel(label)
 
-    let scroll = NSScrollView()
+    let scroll = PaneScrollView()
+    tv.registerForDraggedTypes([.fileURL])
+    scroll.registerForDraggedTypes([.fileURL])
     scroll.hasVerticalScroller = true
     scroll.hasHorizontalScroller = true
     scroll.autohidesScrollers = true
@@ -210,4 +233,12 @@ final class LineNumberRuler: NSRulerView {
     scroll.rulersVisible = true
     scroll.contentView.postsBoundsChangedNotifications = true
     return (scroll, tv)
+}
+
+/// Takes drops on the empty area below short text, which belongs to the scroll view, not the text view.
+final class PaneScrollView: NSScrollView {
+    private var text: DiffTextView? { documentView as? DiffTextView }
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { text?.fileDragOperation(sender) ?? [] }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { text?.fileDragOperation(sender) ?? [] }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool { text?.acceptFiles(sender) ?? false }
 }

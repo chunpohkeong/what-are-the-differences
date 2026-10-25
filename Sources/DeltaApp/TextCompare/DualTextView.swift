@@ -17,6 +17,8 @@ struct DualTextView: NSViewRepresentable {
         rt.copiesToRight = false
         lt.onCopyMarker = { [weak c] hunk in c?.copy(hunk: hunk, fromLeft: true) }
         rt.onCopyMarker = { [weak c] hunk in c?.copy(hunk: hunk, fromLeft: false) }
+        lt.onDropFiles = { [weak c] urls in c?.model.dropped(urls, on: .left) }
+        rt.onDropFiles = { [weak c] urls in c?.model.dropped(urls, on: .right) }
         c.left = lt
         c.right = rt
         for (scroll, side) in [(ls, TextCompareModel.Side.left), (rs, .right)] {

@@ -92,6 +92,36 @@ import PDFKit
         recompute(delay: false)
     }
 
+    /// Files dropped on a pane: one loads into that side, two load left and right.
+    /// Folders, archives and snapshots open a Folder Compare tab instead, on the side they were dropped.
+    func dropped(_ urls: [URL], on side: Side) {
+        let pair = Array(urls.prefix(2))
+        let folderLike = pair.contains { url in
+            (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true || isArchive(url) || url.pathExtension == FolderSnapshot.fileExtension
+        }
+        if folderLike {
+            guard let folder = WindowManager.shared.open(OpenRequest(kind: .folder), tabbedWith: window) as? FolderCompareModel else { return }
+            if pair.count == 2 { (folder.leftURL, folder.rightURL) = (pair[0], pair[1]) }
+            else if side == .left { folder.leftURL = pair[0] } else { folder.rightURL = pair[0] }
+            folder.refresh()
+            return
+        }
+        let targets: [(URL, Side)] = pair.count == 2 ? [(pair[0], .left), (pair[1], .right)] : [(pair[0], side)]
+        if targets.contains(where: { dirty.contains($0.1) }) {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Replace the edited text?"
+            alert.informativeText = "Unsaved edits on that side will be lost."
+            alert.addButton(withTitle: "Replace")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        for (url, target) in targets {
+            load(url, side: target)
+            PathHistory.add(url, folders: false)
+        }
+    }
+
     func edited(_ text: String, side: Side) {
         texts[side] = text
         dirty.insert(side)
