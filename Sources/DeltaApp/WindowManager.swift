@@ -114,6 +114,13 @@ import SwiftUI
     }
 
     /// Text Compare with the clipboard's text on the left.
+    /// A new Text Compare tab with given text on each side (e.g. a selection against the clipboard).
+    func openTexts(left: String, leftLabel: String, right: String, rightLabel: String, tabbedWith host: NSWindow?) {
+        guard let model = open(OpenRequest(kind: .text), tabbedWith: host) as? TextCompareModel else { return }
+        model.setText(left, side: .left, label: leftLabel)
+        model.setText(right, side: .right, label: rightLabel)
+    }
+
     func openClipboard() {
         guard let text = NSPasteboard.general.string(forType: .string) else {
             NSSound.beep()
@@ -148,6 +155,24 @@ import SwiftUI
                     try? result.write(toFile: dir + "/drop.txt", atomically: true, encoding: .utf8)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.snapshot(target, name: name + "-dropped", to: dir) }
                 }
+                return
+            }
+            // DELTA_SNAPSHOT_ACTION=menu right-clicks line 15 of the left text pane, lists the menu, then runs two of its items.
+            if ProcessInfo.processInfo.environment["DELTA_SNAPSHOT_ACTION"] == "menu", name == "text" {
+                var panes: [DiffTextView] = []
+                func find(_ v: NSView) { if let t = v as? DiffTextView { panes.append(t) }; v.subviews.forEach(find) }
+                window.contentView.map(find)
+                guard let left = panes.min(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }) else { return }
+                let point = left.convert(NSPoint(x: 20, y: left.lineTop(line: 14) + 4), to: nil)
+                guard let event = NSEvent.mouseEvent(with: .rightMouseDown, location: point, modifierFlags: [], timestamp: 0,
+                                                     windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1),
+                      let menu = left.menu(for: event) else { return }
+                let listing = menu.items.map { $0.isSeparatorItem ? "—" : "\($0.title)\($0.isEnabled ? "" : " (disabled)")\($0.submenu.map { " ▸ \($0.items.count) apps" } ?? "")" }
+                try? listing.joined(separator: "\n").write(toFile: dir + "/menu.txt", atomically: true, encoding: .utf8)
+                for title in ["Copy Line to Right", "Increase Indent"] {
+                    if let item = menu.items.first(where: { $0.title == title }), let action = item.action { NSApp.sendAction(action, to: item.target, from: item) }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.snapshot(window, name: name + "-menu", to: dir) }
                 return
             }
             if ProcessInfo.processInfo.environment["DELTA_SNAPSHOT_ACTION"] == "duplicate", name == "folder", !self.didTestDuplicate {

@@ -107,19 +107,35 @@ import PDFKit
             return
         }
         let targets: [(URL, Side)] = pair.count == 2 ? [(pair[0], .left), (pair[1], .right)] : [(pair[0], side)]
-        if targets.contains(where: { dirty.contains($0.1) }) {
-            let alert = NSAlert()
-            alert.alertStyle = .warning
-            alert.messageText = "Replace the edited text?"
-            alert.informativeText = "Unsaved edits on that side will be lost."
-            alert.addButton(withTitle: "Replace")
-            alert.addButton(withTitle: "Cancel")
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-        }
+        guard confirmReplacing(targets.map(\.1)) else { return }
         for (url, target) in targets {
             load(url, side: target)
             PathHistory.add(url, folders: false)
         }
+    }
+
+    /// Asks before replacing sides that have unsaved edits.
+    func confirmReplacing(_ sides: [Side]) -> Bool {
+        guard sides.contains(where: dirty.contains) else { return true }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Replace the edited text?"
+        alert.informativeText = "Unsaved edits on that side will be lost."
+        alert.addButton(withTitle: "Replace")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    func openFile(_ side: Side) {
+        guard let url = choosePath(directories: false), confirmReplacing([side]) else { return }
+        load(url, side: side)
+        PathHistory.add(url, folders: false)
+    }
+
+    func openClipboard(_ side: Side) {
+        guard let text = NSPasteboard.general.string(forType: .string) else { NSSound.beep(); return }
+        guard confirmReplacing([side]) else { return }
+        setText(text, side: side, label: "Clipboard")
     }
 
     func edited(_ text: String, side: Side) {
@@ -302,8 +318,9 @@ import PDFKit
         scrollToken += 1
     }
 
-    func save(_ side: Side) {
-        var target = readOnly.contains(side) ? nil : urls[side]
+    /// Writes one side; `asNew` (or a PDF side) asks where.
+    func save(_ side: Side, asNew: Bool = false) {
+        var target = asNew || readOnly.contains(side) ? nil : urls[side]
         if target == nil {
             let panel = NSSavePanel()
             guard panel.runModal() == .OK, let url = panel.url else { return }

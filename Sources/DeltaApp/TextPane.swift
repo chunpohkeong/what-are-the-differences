@@ -25,6 +25,16 @@ final class DiffTextView: NSTextView {
     var onCopyMarker: ((Int) -> Void)?
     /// Original line number (0-based) for each shown line when the pane shows a filtered view; nil entries are gaps.
     var lineNumbers: [Int?]? { didSet { enclosingScrollView?.verticalRulerView?.needsDisplay = true } }
+    /// Builds the right-click menu; nil keeps the standard text menu.
+    var contextMenuProvider: ((NSEvent) -> NSMenu?)?
+
+    override func menu(for event: NSEvent) -> NSMenu? { contextMenuProvider?(event) ?? super.menu(for: event) }
+
+    /// Line under a point in window coordinates.
+    func line(atWindowPoint point: NSPoint) -> Int {
+        lineIndex(containing: characterIndexForInsertion(at: convert(point, from: nil)))
+    }
+
     /// Files or folders dropped on the pane; without it a dropped file inserts its path as text.
     var onDropFiles: (([URL]) -> Void)?
 

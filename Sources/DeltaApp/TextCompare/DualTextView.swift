@@ -17,6 +17,8 @@ struct DualTextView: NSViewRepresentable {
         rt.copiesToRight = false
         lt.onCopyMarker = { [weak c] hunk in c?.copy(hunk: hunk, fromLeft: true) }
         rt.onCopyMarker = { [weak c] hunk in c?.copy(hunk: hunk, fromLeft: false) }
+        lt.contextMenuProvider = { [weak c] event in c?.contextMenu(side: .left, event: event) }
+        rt.contextMenuProvider = { [weak c] event in c?.contextMenu(side: .right, event: event) }
         lt.onDropFiles = { [weak c] urls in c?.model.dropped(urls, on: .left) }
         rt.onDropFiles = { [weak c] urls in c?.model.dropped(urls, on: .right) }
         c.left = lt
@@ -131,6 +133,121 @@ struct DualTextView: NSViewRepresentable {
             guard let line = tv.lineNumbers.map({ shownLine < $0.count ? $0[shownLine] : nil }) ?? shownLine else { return }
             // Deferred: selection also changes while SwiftUI is updating the view.
             DispatchQueue.main.async { [model] in model.setCursor(side: side, line: line) }
+        }
+
+        // MARK: Right-click menu
+
+        func contextMenu(side: TextCompareModel.Side, event: NSEvent) -> NSMenu? {
+            guard let tv = side == .left ? left : right else { return nil }
+            let clicked = tv.line(atWindowPoint: event.locationInWindow)
+            // Right-click inside a selection acts on it; elsewhere on the clicked line (a right-click does not move the caret).
+            let clickedChar = tv.characterIndexForInsertion(at: tv.convert(event.locationInWindow, from: nil))
+            let selected = tv.selectedRange()
+            let indentRange = selected.length > 0 && NSLocationInRange(clickedChar, selected) ? selected : tv.charRange(lines: clicked..<(clicked + 1))
+            // In a filtered view, map the shown line back to its original number ("⋯" gaps have none).
+            let original: Int? = tv.lineNumbers.map { clicked < $0.count ? $0[clicked] : nil } ?? clicked
+            if let original { model.setCursor(side: side, line: original) }
+            let editable = model.viewMode == .all
+            let toRight = side == .left, arrow = toRight ? "Right" : "Left"
+            let hunk = (applied ?? []).firstIndex { h in
+                let r = toRight ? h.left : h.right
+                return h.kind == .change && (r.contains(clicked) || (r.isEmpty && r.lowerBound == clicked))
+            }
+            let menu = NSMenu()
+            menu.addItem(ActionMenuItem("Copy to \(arrow)", enabled: editable && hunk != nil) { [weak self] in
+                hunk.map { self?.copy(hunk: $0, fromLeft: toRight) }
+            })
+            menu.addItem(ActionMenuItem("Copy Line to \(arrow)", enabled: editable) { [weak self] in self?.copyLine(clicked, fromLeft: toRight) })
+            menu.addItem(ActionMenuItem("Increase Indent", enabled: editable) { [weak self] in self?.indent(tv, range: indentRange, increase: true) })
+            menu.addItem(ActionMenuItem("Decrease Indent", enabled: editable) { [weak self] in self?.indent(tv, range: indentRange, increase: false) })
+            menu.addItem(.separator())
+            for (title, action) in [("Cut", #selector(NSText.cut(_:))), ("Copy", #selector(NSText.copy(_:))),
+                                    ("Paste", #selector(NSText.paste(_:))), ("Delete", #selector(NSText.delete(_:)))] {
+                let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+                item.target = tv // the text view enables each one for its selection and editability
+                menu.addItem(item)
+            }
+            menu.addItem(.separator())
+            menu.addItem(ActionMenuItem("Select Section", enabled: hunk != nil) { [weak self] in hunk.map { self?.selectSection($0, in: tv, side: side) } })
+            let selection = (tv.string as NSString).substring(with: tv.selectedRange())
+            menu.addItem(ActionMenuItem("Compare Selection to Clipboard", enabled: !selection.isEmpty && NSPasteboard.general.string(forType: .string) != nil) { [weak self] in
+                WindowManager.shared.openTexts(left: selection, leftLabel: "Selection", right: NSPasteboard.general.string(forType: .string) ?? "",
+                                               rightLabel: "Clipboard", tabbedWith: self?.model.window)
+            })
+            menu.addItem(.separator())
+            menu.addItem(ActionMenuItem("Open File…") { [weak self] in self?.model.openFile(side) })
+            menu.addItem(ActionMenuItem("Open Clipboard", enabled: NSPasteboard.general.string(forType: .string) != nil) { [weak self] in self?.model.openClipboard(side) })
+            menu.addItem(openWithItem(model.urls[side]))
+            menu.addItem(ActionMenuItem("Save File", enabled: model.dirty.contains(side)) { [weak self] in self?.model.save(side) })
+            menu.addItem(ActionMenuItem("Save File As…") { [weak self] in self?.model.save(side, asNew: true) })
+            return menu
+        }
+
+        /// Submenu of apps that can open the file, default app first.
+        private func openWithItem(_ url: URL?) -> NSMenuItem {
+            let item = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
+            guard let url else { item.isEnabled = false; return item }
+            let submenu = NSMenu()
+            let defaultApp = NSWorkspace.shared.urlForApplication(toOpen: url)
+            let apps = [defaultApp].compactMap { $0 } + NSWorkspace.shared.urlsForApplications(toOpen: url).filter { $0 != defaultApp }
+            for app in apps {
+                let name = FileManager.default.displayName(atPath: app.path) + (app == defaultApp ? " (default)" : "")
+                let entry = ActionMenuItem(name) { NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) }
+                entry.image = NSWorkspace.shared.icon(forFile: app.path)
+                entry.image?.size = NSSize(width: 16, height: 16)
+                submenu.addItem(entry)
+            }
+            item.submenu = submenu
+            return item
+        }
+
+        /// Replaces the matching line on the other side with this line, as an undoable edit.
+        func copyLine(_ line: Int, fromLeft: Bool) {
+            guard let left, let right else { return }
+            let (src, dst) = fromLeft ? (left, right) : (right, left)
+            guard line < src.lineStarts.count else { return }
+            let text = (src.string as NSString).substring(with: src.contentRange(line: line))
+            let target = mapLine(line, hunks: applied ?? [], fromLeft: fromLeft)
+            var range = dst.contentRange(line: target)
+            var replacement = text
+            if target >= dst.lineStarts.count { // past the end: add a new line
+                range = NSRange(location: dst.length, length: 0)
+                let needsBreak = dst.length > 0 && (dst.string as NSString).character(at: dst.length - 1) != 10
+                replacement = (needsBreak ? "\n" : "") + text + "\n"
+            }
+            replace(range, in: dst, with: replacement, action: fromLeft ? "Copy Line to Right" : "Copy Line to Left")
+        }
+
+        /// Adds or removes four spaces (or one tab) at the start of every line in `target`.
+        func indent(_ tv: DiffTextView, range target: NSRange, increase: Bool) {
+            let ns = tv.string as NSString
+            guard NSMaxRange(target) <= ns.length else { return }
+            let range = ns.lineRange(for: target)
+            let lines = ns.substring(with: range).components(separatedBy: "\n")
+            let changed = lines.enumerated().map { i, line -> String in
+                if i == lines.count - 1 && line.isEmpty { return line } // text after the final newline
+                if increase { return "    " + line }
+                if line.hasPrefix("\t") { return String(line.dropFirst()) }
+                return String(line.dropFirst(min(4, line.prefix { $0 == " " }.count)))
+            }.joined(separator: "\n")
+            guard changed != ns.substring(with: range) else { return }
+            replace(range, in: tv, with: changed, action: increase ? "Increase Indent" : "Decrease Indent")
+            tv.setSelectedRange(NSRange(location: range.location, length: (changed as NSString).length))
+        }
+
+        func selectSection(_ index: Int, in tv: DiffTextView, side: TextCompareModel.Side) {
+            guard let h = applied?[index] else { return }
+            let range = tv.charRange(lines: side == .left ? h.left : h.right)
+            tv.window?.makeFirstResponder(tv)
+            tv.setSelectedRange(range)
+            tv.scrollRangeToVisible(range)
+        }
+
+        private func replace(_ range: NSRange, in tv: DiffTextView, with text: String, action: String) {
+            guard tv.isEditable, tv.shouldChangeText(in: range, replacementString: text) else { return }
+            tv.textStorage?.replaceCharacters(in: range, with: text)
+            tv.didChangeText()
+            tv.undoManager?.setActionName(action)
         }
 
         /// Replaces one difference on the other side with this side's lines, as an undoable edit.
