@@ -4,6 +4,8 @@ import SwiftUI
 struct FolderCompareView: View {
     @ObservedObject var model: FolderCompareModel
     @State private var showLog = true
+    @State private var tableWidth: CGFloat = 0
+    @State private var dropTargeted = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -186,8 +188,17 @@ struct FolderCompareView: View {
         .overlay {
             if model.entries.isEmpty && !model.isBusy {
                 ContentUnavailableView("No Folders Yet", systemImage: "folder",
-                                       description: Text("Type, paste, browse or drop a folder, .zip, or .deltasnap on each side."))
+                                       description: Text("Drop a folder on the left or right half (or two folders anywhere), or type, paste or browse a path above."))
             }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { tableWidth = $0 }
+        // Drop on the left or right half to set that side; two items set both.
+        .dropDestination(for: URL.self) { urls, location in
+            model.dropped(urls, onLeft: location.x < tableWidth / 2)
+            return true
+        } isTargeted: { dropTargeted = $0 }
+        .overlay {
+            if dropTargeted { RoundedRectangle(cornerRadius: 4).stroke(Color.accentColor, lineWidth: 3).allowsHitTesting(false) }
         }
     }
 

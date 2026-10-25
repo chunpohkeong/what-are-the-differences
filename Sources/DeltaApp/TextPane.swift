@@ -29,13 +29,24 @@ final class DiffTextView: NSTextView {
     var onDropFiles: (([URL]) -> Void)?
 
     func fileDragOperation(_ info: NSDraggingInfo) -> NSDragOperation? {
-        onDropFiles != nil && droppedURLs(info) != nil ? .copy : nil
+        let accepts = onDropFiles != nil && droppedURLs(info) != nil
+        showDropTarget(accepts)
+        return accepts ? .copy : nil
     }
 
     func acceptFiles(_ info: NSDraggingInfo) -> Bool {
+        showDropTarget(false)
         guard let onDropFiles, let urls = droppedURLs(info) else { return false }
         onDropFiles(urls)
         return true
+    }
+
+    /// Accent outline around the pane while files are dragged over it.
+    func showDropTarget(_ on: Bool) {
+        guard let scroll = enclosingScrollView else { return }
+        scroll.wantsLayer = true
+        scroll.layer?.borderColor = NSColor.controlAccentColor.cgColor
+        scroll.layer?.borderWidth = on ? 3 : 0
     }
 
     private func droppedURLs(_ info: NSDraggingInfo) -> [URL]? {
@@ -46,6 +57,10 @@ final class DiffTextView: NSTextView {
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { fileDragOperation(sender) ?? super.draggingEntered(sender) }
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { fileDragOperation(sender) ?? super.draggingUpdated(sender) }
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool { acceptFiles(sender) || super.performDragOperation(sender) }
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        showDropTarget(false)
+        super.draggingExited(sender)
+    }
 
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
@@ -241,4 +256,5 @@ final class PaneScrollView: NSScrollView {
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { text?.fileDragOperation(sender) ?? [] }
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { text?.fileDragOperation(sender) ?? [] }
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool { text?.acceptFiles(sender) ?? false }
+    override func draggingExited(_ sender: NSDraggingInfo?) { text?.showDropTarget(false) }
 }

@@ -118,6 +118,28 @@ import DiffCore
         }
     }
 
+    /// Folders (or archives, snapshots) dropped on the table. Two dropped files open a file compare tab instead.
+    func dropped(_ urls: [URL], onLeft: Bool) {
+        let pair = Array(urls.prefix(2))
+        guard let first = pair.first else { return }
+        let folderLike = pair.allSatisfy { url in
+            (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true || isArchive(url) || url.pathExtension == FolderSnapshot.fileExtension
+        }
+        guard folderLike else {
+            let paths = pair.map(\.path)
+            if paths.count == 2, let kind = OpenRequest.Kind.detect(paths) {
+                WindowManager.shared.open(OpenRequest(kind: kind, paths: paths), tabbedWith: window)
+            } else {
+                NSSound.beep()
+                note("Drop folders here; drop two files to compare them in a new tab")
+            }
+            return
+        }
+        if pair.count == 2 { (leftURL, rightURL) = (pair[0], pair[1]) } else if onLeft { leftURL = first } else { rightURL = first }
+        pair.forEach { PathHistory.add($0, folders: true) }
+        refresh()
+    }
+
     func stop() {
         compareTask?.cancel()
     }

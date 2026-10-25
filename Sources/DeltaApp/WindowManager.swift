@@ -134,6 +134,22 @@ import SwiftUI
             view.cacheDisplay(in: view.bounds, to: rep)
             let url = URL(fileURLWithPath: dir).appending(path: "\(name)-\(self.sessions.count).png")
             try? rep.representation(using: .png, properties: [:])?.write(to: url)
+            // DELTA_SNAPSHOT_ACTION=droptest drops DELTA_DROP_PATHS (colon-separated) at DELTA_DROP_POINT ("x,y" in window points).
+            if ProcessInfo.processInfo.environment["DELTA_SNAPSHOT_ACTION"] == "droptest", name != "home", !name.hasSuffix("-dropped"), !self.didTestDrop {
+                self.didTestDrop = true
+                let env = ProcessInfo.processInfo.environment
+                let urls = (env["DELTA_DROP_PATHS"] ?? "").split(separator: ":").map { URL(fileURLWithPath: String($0)) }
+                let xy = (env["DELTA_DROP_POINT"] ?? "300,300").split(separator: ",").compactMap { Double($0) }
+                // DELTA_DROP_EMPTY=1 drops on a fresh, empty tab of the same kind instead.
+                if env["DELTA_DROP_EMPTY"] != nil { self.open(OpenRequest(kind: OpenRequest.Kind(rawValue: name) ?? .text), tabbedWith: window) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    let target = NSApp.keyWindow ?? window
+                    let result = simulateDrop(urls, at: NSPoint(x: xy[0], y: xy[1]), in: target) + " window=\(target.title)"
+                    try? result.write(toFile: dir + "/drop.txt", atomically: true, encoding: .utf8)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.snapshot(target, name: name + "-dropped", to: dir) }
+                }
+                return
+            }
             if ProcessInfo.processInfo.environment["DELTA_SNAPSHOT_ACTION"] == "duplicate", name == "folder", !self.didTestDuplicate {
                 self.didTestDuplicate = true
                 self.newTab(from: window, duplicate: true)
@@ -169,6 +185,7 @@ import SwiftUI
     private var home: NSWindow?
     private var tabMenuMonitor: Any?
     private var didTestDuplicate = false
+    private var didTestDrop = false
 
     /// ⌘T / the tab bar's +: an empty session of the same kind. Duplicate: same kind and the same files or folders.
     func newTab(from window: NSWindow? = NSApp.keyWindow, duplicate: Bool) {
